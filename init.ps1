@@ -37,7 +37,6 @@ if ($githubadded) {
 }
 else {
     git remote add github https://github.com/abnermu/crate-ca-commands.git
-	git branch -M main
     git push -u github main
     Write-Host "gitlab远程仓库已关联到github并进行了初始化push。"
 }
