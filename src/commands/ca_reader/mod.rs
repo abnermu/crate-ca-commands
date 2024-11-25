@@ -3,6 +3,7 @@ use base64::Engine;
 use image::GenericImageView;
 use serde::{Serialize, Deserialize};
 use hmac::Mac;
+use log as logger;
 
 use jyframe::utils::TokenUtil;
 
@@ -93,7 +94,8 @@ pub fn ca_reader_token(flag: &str) -> Result<TokenResult, String> {
 #[tauri::command]
 pub async fn ca_reader_proxy(method: &str, url: &str, options: serde_json::Value) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
-    let mut req_builder = client.request(if "get" == method.to_lowercase() {reqwest::Method::GET} else {reqwest::Method::POST}, get_url_real(url));
+    let real_url: String = get_url_real(url);
+    let mut req_builder = client.request(if "get" == method.to_lowercase() {reqwest::Method::GET} else {reqwest::Method::POST}, &real_url);
     if let Some(timeout) = options["timeout"].as_u64() {
         req_builder = req_builder.timeout(Duration::from_millis(timeout));
     }
@@ -107,11 +109,19 @@ pub async fn ca_reader_proxy(method: &str, url: &str, options: serde_json::Value
     if "get" != method.to_lowercase() {
         req_builder = req_builder.json(&options["data"]);
     }
-    if let Ok(res) = req_builder.send().await {
-        if let Ok(res_body) = res.json::<serde_json::Value>().await {
-            return Ok(res_body);
+    match req_builder.send().await {
+        Ok(res) => {
+            match res.json::<serde_json::Value>().await {
+                Ok(res_body) => return Ok(res_body),
+                Err(err) => {
+                    logger::error!("try to resolve the proxy result body to ca object failed: {}", err);
+                }
+            };
+        },
+        Err(err) => {
+            logger::error!("try to proxy ca-reader {} with headers {} and body {} failed: {}", &real_url, &options["headers"].to_string(), &options["data"].to_string(), err);
         }
-    }
+    };
     Ok(serde_json::json!({}))
 }
 /// CA组件，中招扫码签章生成二维码
@@ -157,26 +167,56 @@ pub async fn ca_reader_zz_qr_seals(dto: serde_json::Value) -> Result<serde_json:
             let max_width: f64 = 150.0 * (dto["dpi"].as_f64().unwrap_or(96.0)) / 72.0;
             for img_obj in rtn_data {
                 if let Some(seal_img) = img_obj["sealImage"].as_str() {
-                    if let Ok(img_bytes) = base64::engine::general_purpose::STANDARD.decode(seal_img) {
-                        if let Ok(img_reader) = image::ImageReader::new(Cursor::new(&img_bytes[..])).with_guessed_format() {
-                            if let Ok(mut img_ins) = img_reader.decode() {
-                                let (ori_width, ori_height) = img_ins.dimensions();
-                                if ori_width as f64 > max_width {
-                                    let scale: f64 = max_width / ori_width as f64;
-                                    let scaled_width = ori_width as f64 * scale;
-                                    let scaled_height = ori_height as f64 * scale;
-                                    img_ins = img_ins.resize(scaled_width as u32, scaled_height as u32, image::imageops::FilterType::Lanczos3);
-                                    let mut scaled_img_bytes: Vec<u8> = Vec::new();
-                                    if let Ok(_) = img_ins.write_to(&mut Cursor::new(&mut scaled_img_bytes), image::ImageFormat::Png) {
-                                        img_obj["sealImage"] = serde_json::json!(base64::engine::general_purpose::STANDARD.encode(&scaled_img_bytes[..]));
+                    match base64::engine::general_purpose::STANDARD.decode(seal_img) {
+                        Ok(img_bytes) => {
+                            match image::ImageReader::new(Cursor::new(&img_bytes[..])).with_guessed_format() {
+                                Ok(img_reader) => {
+                                    match img_reader.decode() {
+                                        Ok(mut img_ins) => {
+                                            let (ori_width, ori_height) = img_ins.dimensions();
+                                            if ori_width as f64 > max_width {
+                                                let scale: f64 = max_width / ori_width as f64;
+                                                let scaled_width = ori_width as f64 * scale;
+                                                let scaled_height = ori_height as f64 * scale;
+                                                img_ins = img_ins.resize(scaled_width as u32, scaled_height as u32, image::imageops::FilterType::Lanczos3);
+                                                let mut scaled_img_bytes: Vec<u8> = Vec::new();
+                                                match img_ins.write_to(&mut Cursor::new(&mut scaled_img_bytes), image::ImageFormat::Png) {
+                                                    Ok(_) => img_obj["sealImage"] = serde_json::json!(base64::engine::general_purpose::STANDARD.encode(&scaled_img_bytes[..])),
+                                                    Err(err) => {
+                                                        logger::error!("write resized image to bytes failed: {}", err);
+                                                    }
+                                                }
+                                            }
+                                            else {
+                                                logger::info!("the seal image no need to be resized");
+                                            }
+                                        },
+                                        Err(err) => {
+                                            logger::error!("get dynamic image instance failed: {}", err);
+                                        }
                                     }
+                                },
+                                Err(err) => {
+                                    logger::error!("create image reader failed: {}", err);
                                 }
                             }
+                        },
+                        Err(err) => {
+                            logger::error!("try to convert sealImage from base64 to bytes failed: {}", err);
                         }
                     }
                 }
+                else {
+                    logger::warn!("there is not user sealImage");
+                }
             }
         }
+        else {
+            logger::warn!("there is not user seals");
+        }
+    }
+    else {
+        logger::warn!("there is not user seals");
     }
     Ok(rtn)
 }
@@ -207,9 +247,20 @@ async fn zz_common_request(body: &str, feature_code: &str) -> serde_json::Value 
     let client = reqwest::Client::new();
     let mut form = HashMap::new();
     form.insert("businessData", body);
-    if let Ok(res) = client.post(format!("{}/CAShare/Components", DEFAULT_SERVICE_URL)).headers(headers).form(&form).send().await {
-        if let Ok(rtn) = res.json::<serde_json::Value>().await {
-            return rtn.clone();
+    logger::info!("request to zz server, the headers is {:?} and the body is {:?}", &headers, &form);
+    match client.post(format!("{}/CAShare/Components", DEFAULT_SERVICE_URL)).headers(headers).form(&form).send().await {
+        Ok(res) => {
+            match res.json::<serde_json::Value>().await {
+                Ok(rtn) => {
+                    return rtn.clone();
+                },
+                Err(err) => {
+                    logger::error!("try to convert zz response to json object failed: {}", err);
+                }
+            }
+        },
+        Err(err) => {
+            logger::error!("try to request zz server {} failed: {}", format!("{}/CAShare/Components", DEFAULT_SERVICE_URL), err);
         }
     }
     serde_json::json!({})
@@ -257,10 +308,15 @@ fn zz_cal_signature(body: &str, time_stamp: &str, request_uuid: &str, authorizat
     vec_message.push(format!("{}={}", "Version", version));
     vec_message.push(format!("{}={}", "businessData", body));
     let message = format!("{}{}{}", vec_message.join(","), &time_stamp[0..3], &request_uuid[0..3]);
-    if let Ok(mut hmac) = hmac::Hmac::<sm3::Sm3>::new_from_slice(signature_secret.as_bytes()) {
-        hmac.update(message.as_bytes());
-        let rtn = hex::encode(hmac.finalize().into_bytes());
-        return rtn;
+    match hmac::Hmac::<sm3::Sm3>::new_from_slice(signature_secret.as_bytes()) {
+        Ok(mut hmac) => {
+            hmac.update(message.as_bytes());
+            let rtn = hex::encode(hmac.finalize().into_bytes());
+            return rtn;
+        },
+        Err(err) => {
+            logger::error!("hmac-sm3 hash failed: {}", err);
+        }
     }
     String::from("")
 }

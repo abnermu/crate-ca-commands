@@ -1,6 +1,7 @@
 
 use std::sync::{Arc, Mutex};
 use tauri::State;
+use log as logger;
 
 use jyframe::state::AppState;
 use super::Response;
@@ -44,16 +45,22 @@ pub async fn ep_init_caobj(state: State<'_, Arc<Mutex<AppState>>>, with_img: boo
                 ca_obj.qianzhanginfo = qz.to_string();
             }
         }
-        if let Ok(json_str) = serde_json::to_string(&ca_obj) {
-            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                return Ok(Response::res_ok(json_val));
+        match serde_json::to_string(&ca_obj) {
+            Ok(json_str) => {
+                match serde_json::from_str::<serde_json::Value>(&json_str) {
+                    Ok(json_val) => {
+                        Ok(Response::res_ok(json_val))
+                    },
+                    Err(err) => {
+                        logger::error!("error occured when convert json string to json object: {}", err);
+                        Ok(Response::res_ok(serde_json::json!({})))
+                    }
+                }
+            },
+            Err(err) => {
+                logger::error!("error occured when convert ca object to json string: {}", err);
+                Ok(Response::res_ok(serde_json::json!({})))
             }
-            else {
-                return Ok(Response::res_ok(serde_json::json!({})));
-            }
-        }
-        else {
-            return Ok(Response::res_ok(serde_json::json!({})));
         }
     }
     else {
@@ -82,6 +89,9 @@ pub async fn ep_encrypt(state: State<'_, Arc<Mutex<AppState>>>, org_data: &str) 
         if let Some(encrypted) = rtn["body"]["qrinfo"]["decryptobjects"][0]["encryed"].as_str() {
             return Ok(Response::res_ok(encrypted.to_string()));
         }
+        else {
+            logger::warn!("ep server ecnrypt response struct resolve failed: {}", &rtn.to_string());
+        }
     }
     else {
         return Ok(Response::res_error("程序启动失败，请重装驱动后重启电脑尝试。"));
@@ -107,6 +117,9 @@ pub async fn ep_decrypt(state: State<'_, Arc<Mutex<AppState>>>, enc_data: &str) 
         if let Some(decrypted) = rtn["body"]["qrinfo"]["decryptobjects"][0]["org"].as_str() {
             return Ok(Response::res_ok(decrypted.to_string()));
         }
+        else {
+            logger::warn!("ep server decrypt response struct resolve failed: {}", &rtn.to_string());
+        }
     }
     else {
         return Ok(Response::res_error("程序启动失败，请重装驱动后重启电脑尝试。"));
@@ -131,6 +144,9 @@ pub async fn ep_sign(state: State<'_, Arc<Mutex<AppState>>>, org_data: &str) -> 
         let rtn = post_data(AppState::get_ep_ca_port(&state), req_body).await;
         if let Some(signed) = rtn["body"]["qrinfo"]["signatureobjects"][0]["signed"].as_str() {
             return Ok(Response::res_ok(signed.to_string()));
+        }
+        else {
+            logger::warn!("ep server sign response struct resolve failed: {}", &rtn.to_string());
         }
     }
     else {
@@ -163,6 +179,9 @@ pub async fn ep_verify(state: State<'_, Arc<Mutex<AppState>>>, org_data: &str, s
         if let Some(verify) = rtn["body"]["qrinfo"]["signatureobjects"][0]["desc"].as_str() {
             return Ok(Response::res_ok("1" == verify));
         }
+        else {
+            logger::warn!("ep server verify response struct resolve failed: {}", &rtn.to_string());
+        }
     }
     else {
         return Ok(Response::res_error("程序启动失败，请重装驱动后重启电脑尝试。"));
@@ -190,6 +209,9 @@ pub async fn ep_check_pin(state: State<'_, Arc<Mutex<AppState>>>, pwd: &str) -> 
         if let Some(valid) = rtn["body"]["qrinfo"]["ext"]["pwd"].as_str() {
             return Ok(Response::res_ok("1" == valid));
         }
+        else {
+            logger::warn!("ep server check pin response struct resolve failed: {}", &rtn.to_string());
+        }
     }
     else {
         return Ok(Response::res_error("程序启动失败，请重装驱动后重启电脑尝试。"));
@@ -203,6 +225,9 @@ async fn get_cert_object(port: i32, qrtype: &str, result_key: &str) -> String {
     if let Some(rtn) = data["body"]["qrinfo"]["certobject"][result_key].as_str() {
         return rtn.to_string();
     }
+    else {
+        logger::warn!("ep server cert object response struct resolve failed: {}", &data.to_string());
+    }
     String::from("")
 }
 /// 内部方法CA初始化
@@ -210,6 +235,9 @@ async fn ca_init(port: i32) -> bool {
     let data = post_data(port, prepare("CAInit")).await;
     if let Some(qrstatus) = data["body"]["qrstatus"].as_str() {
         return qrstatus == "1";
+    }
+    else {
+        logger::warn!("ep server ca init response struct resolve failed: {}", &data.to_string());
     }
     false
 }
@@ -225,11 +253,15 @@ async fn test_port(state: &State<'_, Arc<Mutex<AppState>>>) -> bool {
         return true;
     }
     else {
+        logger::warn!("try to connect ep server with port {} failed, try next port", port);
         for i in 0..10 {
             port = DEFAULT_PORT + i;
             if connect(port).await["CAType"].as_str().unwrap_or("0") == DEFAULT_CA_TYPE {
                 AppState::set_ep_ca_port(port, state);
                 return true;
+            }
+            else {
+                logger::warn!("try to connect ep server with port {} failed, try next port", port);
             }
         }
     }
@@ -248,18 +280,38 @@ fn prepare(qrtype: &str) -> serde_json::Value {
 /// 内部方法请求数据
 async fn post_data(port: i32, body: serde_json::Value) -> serde_json::Value {
     let client = reqwest::Client::new();
-    if let Ok(res) = client.post(format!("{}:{}", DEFAULT_HOST, port)).json(&body).send().await {
-        if let Ok(body) = res.json::<serde_json::Value>().await {
-            return body.clone();
+    match client.post(format!("{}:{}", DEFAULT_HOST, port)).json(&body).send().await {
+        Ok(res) => {
+            match res.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    return body.clone();
+                },
+                Err(err) => {
+                    logger::error!("try to convert ep response to json object failed: {}", err);
+                }
+            }
+        },
+        Err(err) => {
+            logger::error!("try to request ep server {} with data {} failed: {}", format!("{}:{}", DEFAULT_HOST, port), &body.to_string(), err);
         }
     }
     serde_json::json!({})
 }
 /// 内部方法连接本地端口
 async fn connect(port: i32) -> serde_json::Value {
-    if let Ok(res) = reqwest::get(format!("{}:{}", DEFAULT_HOST, port.to_string())).await {
-        if let Ok(rtn) = res.json::<serde_json::Value>().await {
-            return rtn.clone();
+    match reqwest::get(format!("{}:{}", DEFAULT_HOST, port.to_string())).await {
+        Ok(res) => {
+            match res.json::<serde_json::Value>().await {
+                Ok(rtn) => {
+                    return rtn.clone();
+                },
+                Err(err) => {
+                    logger::error!("try to convert ep response to json object failed: {}", err);
+                }
+            }
+        },
+        Err(err) => {
+            logger::error!("try to get ep server {} failed: {}", format!("{}:{}", DEFAULT_HOST, port), err);
         }
     }
     serde_json::json!({"CAType": "0"})

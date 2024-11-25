@@ -1,4 +1,5 @@
 use base64::Engine;
+use log as logger;
 
 use jyframe::utils::TokenUtil;
 use super::Response;
@@ -31,16 +32,22 @@ pub async fn cfca_init_caobj(with_img: bool) -> Result<Response<serde_json::Valu
     if with_img {
         ca_obj.qianzhanginfo = get_qianzhang(&ca_obj.device_num).await;
     }
-    if let Ok(json_str) = serde_json::to_string(&ca_obj) {
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            return Ok(Response::res_ok(json_val));
+    match serde_json::to_string(&ca_obj) {
+        Ok(json_str) => {
+            match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(json_val) => {
+                    Ok(Response::res_ok(json_val))
+                },
+                Err(err) => {
+                    logger::error!("error occured when convert json string to json object: {}", err);
+                    Ok(Response::res_ok(serde_json::json!({})))
+                },
+            }
+        },
+        Err(err) => {
+            logger::error!("error occured when convert ca_obj to json string: {}", err);
+            Ok(Response::res_ok(serde_json::json!({})))
         }
-        else {
-            return Ok(Response::res_ok(serde_json::json!({})));
-        }
-    }
-    else {
-        return Ok(Response::res_ok(serde_json::json!({})));
     }
 }
 /// 数据解密
@@ -86,6 +93,9 @@ pub fn cfca_check_pin(pwd: &str) -> Result<Response<bool>, i32> {
             return Ok(Response::res_error(&retry_count_str));
         }
     }
+    else {
+        logger::error!("check pin failed");
+    }
     Err(0)
 }
 /// 内部方法获取签章图片
@@ -98,15 +108,27 @@ async fn get_qianzhang(dev_num: &str) -> String {
     let mut token = format!("{}:{}:{}", &app_key, &app_secret, TokenUtil::create_key_secret_token_default(&app_key, &app_secret));
     token = base64::engine::general_purpose::STANDARD.encode(token.as_bytes());
     let client: reqwest::Client = reqwest::Client::new();
-    if let Ok(res) = client.post(url).header("authorization", token).json(&body).send().await {
-        if let Ok(res_body) = res.json::<serde_json::Value>().await {
-            let mut qz_str_arr = vec![
-                make_qz_image_str(1, res_body["data"]["qygz"].as_str().unwrap_or("")),
-                make_qz_image_str(2, res_body["data"]["frqz"].as_str().unwrap_or("")),
-                make_qz_image_str(4, res_body["data"]["grqz"].as_str().unwrap_or("")),
-            ];
-            qz_str_arr = qz_str_arr.iter().filter(|&qz_str| qz_str != "").cloned().collect();
-            return qz_str_arr.join("|||");
+    logger::info!("begin to request to {}, the token is {} and the body is {}.", url, &token, &body);
+    match client.post(url).header("authorization", token).json(&body).send().await {
+        Ok(res) => {
+            match res.json::<serde_json::Value>().await {
+                Ok(res_body) => {
+                    logger::info!("get sign image from ca and the result is : {}", &res_body.to_string());
+                    let mut qz_str_arr = vec![
+                        make_qz_image_str(1, res_body["data"]["qygz"].as_str().unwrap_or("")),
+                        make_qz_image_str(2, res_body["data"]["frqz"].as_str().unwrap_or("")),
+                        make_qz_image_str(4, res_body["data"]["grqz"].as_str().unwrap_or("")),
+                    ];
+                    qz_str_arr = qz_str_arr.iter().filter(|&qz_str| qz_str != "").cloned().collect();
+                    return qz_str_arr.join("|||");
+                },
+                Err(err) => {
+                    logger::error!("error occured when try to convert response to json object: {}", err);
+                },
+            }
+        },
+        Err(err) => {
+            logger::error!("error occured when try to request to {}: {}", url, err);
         }
     }
     String::from("")
