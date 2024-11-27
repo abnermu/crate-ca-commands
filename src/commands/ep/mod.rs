@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 use log as logger;
 
-use jyframe::state::AppState;
-use super::Response;
+use jyframe::{AppState, Response, JsonOut};
 
 const DEFAULT_HOST: &str = "http://127.0.0.1";
 const DEFAULT_PORT: i32 = 11345;
@@ -45,23 +44,7 @@ pub async fn ep_init_caobj(state: State<'_, Arc<Mutex<AppState>>>, with_img: boo
                 ca_obj.qianzhanginfo = qz.to_string();
             }
         }
-        match serde_json::to_string(&ca_obj) {
-            Ok(json_str) => {
-                match serde_json::from_str::<serde_json::Value>(&json_str) {
-                    Ok(json_val) => {
-                        Ok(Response::res_ok(json_val))
-                    },
-                    Err(err) => {
-                        logger::error!("error occured when convert json string to json object: {}", err);
-                        Ok(Response::res_ok(serde_json::json!({})))
-                    }
-                }
-            },
-            Err(err) => {
-                logger::error!("error occured when convert ca object to json string: {}", err);
-                Ok(Response::res_ok(serde_json::json!({})))
-            }
-        }
+        Ok(Response::res_ok(ca_obj.to_json()))
     }
     else {
         return Ok(Response::res_error("程序启动失败，请重装驱动后重启电脑尝试。"));

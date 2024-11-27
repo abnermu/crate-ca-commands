@@ -1,8 +1,7 @@
 use base64::Engine;
 use log as logger;
 
-use jyframe::utils::TokenUtil;
-use super::Response;
+use jyframe::{JsonOut, Response, TokenUtil};
 
 /// 获取ca完整信息
 /// # 参数
@@ -32,23 +31,7 @@ pub async fn cfca_init_caobj(with_img: bool) -> Result<Response<serde_json::Valu
     if with_img {
         ca_obj.qianzhanginfo = get_qianzhang(&ca_obj.device_num).await;
     }
-    match serde_json::to_string(&ca_obj) {
-        Ok(json_str) => {
-            match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(json_val) => {
-                    Ok(Response::res_ok(json_val))
-                },
-                Err(err) => {
-                    logger::error!("error occured when convert json string to json object: {}", err);
-                    Ok(Response::res_ok(serde_json::json!({})))
-                },
-            }
-        },
-        Err(err) => {
-            logger::error!("error occured when convert ca_obj to json string: {}", err);
-            Ok(Response::res_ok(serde_json::json!({})))
-        }
-    }
+    Ok(Response::res_ok(ca_obj.to_json()))
 }
 /// 数据解密
 /// # 参数

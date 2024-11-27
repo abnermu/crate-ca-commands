@@ -222,10 +222,10 @@ pub async fn ca_reader_zz_qr_seals(dto: serde_json::Value) -> Result<serde_json:
 }
 /// 内部方法，替换url为实际的请求地址
 fn get_url_real(url: &str) -> String {
-    let reg_ca_reader = regex::Regex::new("^/careader").unwrap();
-    let reg_liaoyitong = regex::Regex::new("^/liaoyitong").unwrap();
-    let reg_face_smrz = regex::Regex::new("^/face/smrz").unwrap();
-    let reg_face = regex::Regex::new("^/face").unwrap();
+    let reg_ca_reader = regex::Regex::new(r"^/careader").unwrap();
+    let reg_liaoyitong = regex::Regex::new(r"^/liaoyitong").unwrap();
+    let reg_face_smrz = regex::Regex::new(r"^/face/smrz").unwrap();
+    let reg_face = regex::Regex::new(r"^/face").unwrap();
     if reg_ca_reader.is_match(url) {
         return reg_ca_reader.replace(url, "http://47.94.96.97:8394/api").to_string();
     }
