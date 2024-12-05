@@ -177,11 +177,15 @@ pub async fn ca_reader_zz_qr_seals(dto: serde_json::Value) -> Result<serde_json:
 }
 /// 内部方法，替换url为实际的请求地址
 fn get_url_real(url: &str) -> String {
+    let reg_ca_reader_pccert = regex::Regex::new(r"^/careader/pccert").unwrap();
     let reg_ca_reader = regex::Regex::new(r"^/careader").unwrap();
     let reg_liaoyitong = regex::Regex::new(r"^/liaoyitong").unwrap();
     let reg_face_smrz = regex::Regex::new(r"^/face/smrz").unwrap();
     let reg_face = regex::Regex::new(r"^/face").unwrap();
-    if reg_ca_reader.is_match(url) {
+    if reg_ca_reader_pccert.is_match(url) {
+        return reg_ca_reader_pccert.replace(url, "http://114.115.181.95:8070/api").to_string();
+    }
+    else if reg_ca_reader.is_match(url) {
         return reg_ca_reader.replace(url, "http://47.94.96.97:8394/api").to_string();
     }
     else if reg_liaoyitong.is_match(url) {
