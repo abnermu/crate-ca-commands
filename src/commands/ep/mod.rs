@@ -41,7 +41,7 @@ pub async fn ep_init_caobj(state: State<'_, Arc<Mutex<AppState>>>, with_img: boo
             });
             let qz_data = post_data(AppState::get_ep_ca_port(&state), qz_req).await;
             if let Some(qz) = qz_data["body"]["qrinfo"]["ext"]["Image"].as_str() {
-                ca_obj.qianzhanginfo = qz.to_string();
+                ca_obj.qianzhanginfo = super::EnQianZhangInfo::QianZhangStr(qz.to_string());
             }
         }
         Ok(Response::res_ok(ca_obj.to_json()))

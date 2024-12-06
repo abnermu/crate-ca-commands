@@ -1,6 +1,5 @@
-use std::{io::Cursor, time::Duration};
+use std::time::Duration;
 use base64::Engine;
-use image::GenericImageView;
 use serde::{Serialize, Deserialize};
 use log as logger;
 
@@ -159,7 +158,7 @@ pub async fn ca_reader_zz_qr_seals(dto: serde_json::Value) -> Result<serde_json:
             let max_width: f64 = 150.0 * (dto["dpi"].as_f64().unwrap_or(96.0)) / 72.0;
             for img_obj in rtn_data {
                 if let Some(seal_img) = img_obj["sealImage"].as_str() {
-                    img_obj["sealImage"] = serde_json::json!(resize_seal_image(seal_img, max_width));
+                    img_obj["sealImage"] = serde_json::json!(jyframe::ImageUtil::resize_image(seal_img, max_width));
                 }
                 else {
                     logger::warn!("there is not user sealImage");
@@ -198,46 +197,4 @@ fn get_url_real(url: &str) -> String {
         return reg_face.replace(url, "https://lnwlzj.capass.cn/ca/cloudSignatureExpireStatus").to_string();
     }
     url.to_string()
-}
-/// 内部方法图片缩放
-fn resize_seal_image(seal_img: &str, max_width: f64) -> String {
-    match base64::engine::general_purpose::STANDARD.decode(seal_img) {
-        Ok(img_bytes) => {
-            match image::ImageReader::new(Cursor::new(&img_bytes[..])).with_guessed_format() {
-                Ok(img_reader) => {
-                    match img_reader.decode() {
-                        Ok(mut img_ins) => {
-                            let (ori_width, ori_height) = img_ins.dimensions();
-                            if ori_width as f64 > max_width {
-                                let scale: f64 = max_width / ori_width as f64;
-                                let scaled_width = ori_width as f64 * scale;
-                                let scaled_height = ori_height as f64 * scale;
-                                img_ins = img_ins.resize(scaled_width as u32, scaled_height as u32, image::imageops::FilterType::Lanczos3);
-                                let mut scaled_img_bytes: Vec<u8> = Vec::new();
-                                match img_ins.write_to(&mut Cursor::new(&mut scaled_img_bytes), image::ImageFormat::Png) {
-                                    Ok(_) => return base64::engine::general_purpose::STANDARD.encode(&scaled_img_bytes[..]),
-                                    Err(err) => {
-                                        logger::error!("write resized image to bytes failed: {}", err);
-                                    }
-                                }
-                            }
-                            else {
-                                logger::info!("the seal image no need to be resized");
-                            }
-                        },
-                        Err(err) => {
-                            logger::error!("get dynamic image instance failed: {}", err);
-                        }
-                    }
-                },
-                Err(err) => {
-                    logger::error!("create image reader failed: {}", err);
-                }
-            }
-        },
-        Err(err) => {
-            logger::error!("try to convert sealImage from base64 to bytes failed: {}", err);
-        }
-    }
-    seal_img.to_string()
 }

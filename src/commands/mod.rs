@@ -1,9 +1,22 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 pub mod cfca;
 pub mod ep;
 pub mod ca_reader;
 
+/// 签章信息枚举
+#[derive(Serialize, Deserialize, Debug)]
+pub enum EnQianZhangInfo {
+    /// 字符串信息
+    QianZhangStr(String),
+    /// json数组
+    QianZhangArr(serde_json::Value),
+}
+impl Default for EnQianZhangInfo {
+    fn default() -> Self {
+        Self::QianZhangStr(String::from(""))
+    }
+}
 /// caobj结构体对象，用于转json
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +40,18 @@ pub struct CaObj {
     /// 互联互通驱动标识
     pub by_union: bool,
     /// 签章信息
-    pub qianzhanginfo: String,
+    #[serde(serialize_with = "qianzhanginfo_serializer")]
+    pub qianzhanginfo: EnQianZhangInfo,
 }
 impl jyframe::JsonOut for CaObj {
+}
+
+fn qianzhanginfo_serializer<S>(value: &EnQianZhangInfo, serializer: S) -> Result<S::Ok, S::Error> 
+where 
+    S: Serializer
+{
+    match value {
+        EnQianZhangInfo::QianZhangStr(s) => s.serialize(serializer),
+        EnQianZhangInfo::QianZhangArr(arr) => arr.serialize(serializer),
+    }
 }

@@ -7,7 +7,7 @@ use jyframe::{JsonOut, Response, TokenUtil};
 /// # 参数
 /// - `with_img` 是否包含签章图片
 #[tauri::command]
-pub async fn cfca_init_caobj(with_img: bool) -> Result<Response<serde_json::Value>, String> {
+pub async fn cfca_init_caobj(with_img: bool, dpi: Option<f64>) -> Result<Response<serde_json::Value>, String> {
     let mut ca_obj: super::CaObj = super::CaObj::default();
     ca_obj.by_union = true;
     ca_obj.device_num = ukeyskf::get_device_num();
@@ -29,7 +29,7 @@ pub async fn cfca_init_caobj(with_img: bool) -> Result<Response<serde_json::Valu
     }
     // 签章图片获取
     if with_img {
-        ca_obj.qianzhanginfo = get_qianzhang(&ca_obj.device_num).await;
+        ca_obj.qianzhanginfo = super::EnQianZhangInfo::QianZhangArr(get_qianzhang(&ca_obj.device_num, dpi).await);
     }
     Ok(Response::res_ok(ca_obj.to_json()))
 }
@@ -82,7 +82,7 @@ pub fn cfca_check_pin(pwd: &str) -> Result<Response<bool>, i32> {
     Err(0)
 }
 /// 内部方法获取签章图片
-async fn get_qianzhang(dev_num: &str) -> String {
+async fn get_qianzhang(dev_num: &str, dpi: Option<f64>) -> serde_json::Value {
     let url = "http://47.94.96.97:8394/api/zsqz/getQz";
     // let platform_code = "wljypt";
     let app_key = "wljypt";
@@ -97,13 +97,17 @@ async fn get_qianzhang(dev_num: &str) -> String {
             match res.json::<serde_json::Value>().await {
                 Ok(res_body) => {
                     logger::info!("get sign image from ca and the result is : {}", &res_body.to_string());
-                    let mut qz_str_arr = vec![
-                        make_qz_image_str(1, res_body["data"]["qygz"].as_str().unwrap_or("")),
-                        make_qz_image_str(2, res_body["data"]["frqz"].as_str().unwrap_or("")),
-                        make_qz_image_str(4, res_body["data"]["grqz"].as_str().unwrap_or("")),
-                    ];
-                    qz_str_arr = qz_str_arr.iter().filter(|&qz_str| qz_str != "").cloned().collect();
-                    return qz_str_arr.join("|||");
+                    let mut qz_arr: serde_json::Value = serde_json::json!([]);
+                    if let Some(qz_obj) = make_qz_image_array(1, res_body["data"]["qygz"].as_str().unwrap_or(""), dpi) {
+                        qz_arr.as_array_mut().unwrap().push(qz_obj);
+                    }
+                    if let Some(qz_obj) = make_qz_image_array(2, res_body["data"]["frqz"].as_str().unwrap_or(""), dpi) {
+                        qz_arr.as_array_mut().unwrap().push(qz_obj);
+                    }
+                    if let Some(qz_obj) = make_qz_image_array(4, res_body["data"]["grqz"].as_str().unwrap_or(""), dpi) {
+                        qz_arr.as_array_mut().unwrap().push(qz_obj);
+                    }
+                    return qz_arr;
                 },
                 Err(err) => {
                     logger::error!("error occured when try to convert response to json object: {}", err);
@@ -114,9 +118,10 @@ async fn get_qianzhang(dev_num: &str) -> String {
             logger::error!("error occured when try to request to {}: {}", url, err);
         }
     }
-    String::from("")
+    serde_json::json!([])
 }
 /// 内部方法拼接签章字符串
+#[allow(dead_code)]
 fn make_qz_image_str(seal_type: i32, seal_image: &str) -> String {
     return if seal_image != "" {
         format!("{}-{}@@@{}", seal_type, if 1 == seal_type {"法定代表人公章"} else if 2 == seal_type {"法定代表人印鉴"} else {"个人签名"}, seal_image)
@@ -124,4 +129,17 @@ fn make_qz_image_str(seal_type: i32, seal_image: &str) -> String {
     else {
         String::from("")
     };
+}
+/// 内部方法拼接签章数组
+fn make_qz_image_array(seal_type: i32, seal_image: &str, dpi: Option<f64>) -> Option<serde_json::Value> {
+    if seal_image != "" {
+        let max_width: f64 = 150.0 * (dpi.unwrap_or(96.0)) / 72.0;
+        return Some(serde_json::json!({
+            "sealSn": uuid::Uuid::new_v4(),
+            "sealType": seal_type,
+            "sealName": if 1 == seal_type {"法定代表人公章"} else if 2 == seal_type {"法定代表人印鉴"} else {"个人签名"},
+            "sealImage": jyframe::ImageUtil::resize_image(seal_image, max_width)
+        }));
+    }
+    None
 }
